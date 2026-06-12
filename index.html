@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOS WK 2026 — Samenvattingen (spoilervrij)</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:#f5f6f8; color:#15181c; }
+  .wrap { max-width:1100px; margin:0 auto; padding:24px 18px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:#5b6470; font-size:14px; margin:0; }
+  .spoiler-note { display:inline-flex; align-items:center; gap:7px; background:#e8f0ff; color:#1d4ed8; border:1px solid #cdddff; padding:6px 12px; border-radius:999px; font-size:13px; font-weight:500; margin-top:12px; }
+  .grid { display:grid; gap:18px; margin-top:22px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
+  .card { background:#fff; border:1px solid #e3e6ea; border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .player { position:relative; width:100%; aspect-ratio:16/9; background:#0b0d10; }
+  .cover { position:absolute; inset:0; cursor:pointer; border:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; color:#fff; padding:16px; background:linear-gradient(135deg,#1f2937 0%,#0f172a 100%); }
+  .cover:hover { background:linear-gradient(135deg,#273449 0%,#0f172a 100%); }
+  .cover .teams { font-size:20px; font-weight:700; line-height:1.25; }
+  .cover .play { display:inline-flex; align-items:center; justify-content:center; width:56px; height:56px; border-radius:50%; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.35); }
+  .cover .play svg { width:22px; height:22px; margin-left:3px; fill:#fff; }
+  .cover .hint { font-size:12px; color:#b9c2cf; }
+  iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .topmask { position:absolute; top:0; left:0; right:0; height:52px; background:#0b0d10; color:#fff; display:flex; align-items:center; justify-content:space-between; padding:0 12px; pointer-events:none; z-index:2; font-size:13px; font-weight:600; }
+  .topmask .src { font-size:11px; font-weight:600; color:#ff9aa2; letter-spacing:.04em; }
+  .closebtn { pointer-events:auto; cursor:pointer; background:rgba(255,255,255,.16); border:0; color:#fff; border-radius:8px; padding:5px 10px; font-size:12px; }
+  .closebtn:hover { background:rgba(255,255,255,.3); }
+  .meta { padding:12px 14px 14px; }
+  .meta .teams { font-size:15px; font-weight:700; }
+  .meta .date { font-size:13px; color:#5b6470; margin-top:2px; }
+  .source-line { font-size:12px; color:#8a93a0; margin-top:6px; }
+  .empty { grid-column:1/-1; text-align:center; color:#5b6470; background:#fff; border:1px dashed #d7dbe0; border-radius:14px; padding:40px 20px; }
+  footer { margin-top:30px; font-size:12px; color:#8a93a0; text-align:center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>⚽ WK 2026 — Samenvattingen</h1>
+      <p class="sub">Bron: <strong>NOS Sport</strong> · bijgewerkt op 12 juni 2026</p>
+      <div class="spoiler-note"><span>🙈</span> Spoilervrij — geen uitslagen of standen. Klik op een kaart om af te spelen.</div>
+    </header>
+    <div class="grid" id="grid"></div>
+    <footer>Deze pagina wordt elke ochtend automatisch ververst. Sluit een video met ✕ om YouTube-eindschermen (kunnen uitslagen tonen) te vermijden.</footer>
+  </div>
+<script>
+  const MATCHES = [{"id": "84RGrVxrRF4", "teams": "Zuid-Korea – Tsjechië", "date": "do 12 juni 2026"}, {"id": "ZqzX-RTl3jo", "teams": "Mexico – Zuid-Afrika", "date": "wo 11 juni 2026"}];
+  const ORIGIN = encodeURIComponent(window.location.origin);
+  const grid = document.getElementById("grid");
+  function playIcon(){ return '<span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span>'; }
+  function makeCover(player, m){
+    const c=document.createElement("button"); c.className="cover";
+    c.innerHTML='<div class="teams">'+m.teams+'</div>'+playIcon()+'<div class="hint">Samenvatting · NOS</div>';
+    c.addEventListener("click",function(){ playVideo(player,m); });
+    return c;
+  }
+  function render(){
+    grid.innerHTML="";
+    if(!MATCHES.length){ grid.innerHTML='<div class="empty">Nog geen samenvattingen beschikbaar. De pagina wordt elke ochtend bijgewerkt.</div>'; return; }
+    MATCHES.forEach(function(m){
+      const card=document.createElement("div"); card.className="card";
+      const player=document.createElement("div"); player.className="player";
+      player.appendChild(makeCover(player,m));
+      const meta=document.createElement("div"); meta.className="meta";
+      meta.innerHTML='<div class="teams">'+m.teams+'</div><div class="date">'+(m.date||"")+'</div><div class="source-line">Samenvatting: NOS Sport</div>';
+      card.appendChild(player); card.appendChild(meta); grid.appendChild(card);
+    });
+  }
+  function playVideo(player,m){
+    player.innerHTML="";
+    const iframe=document.createElement("iframe");
+    iframe.src="https://www.youtube-nocookie.com/embed/"+m.id+"?autoplay=1&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&origin="+ORIGIN;
+    iframe.allow="autoplay; encrypted-media; picture-in-picture; fullscreen";
+    iframe.allowFullscreen=true;
+    const mask=document.createElement("div"); mask.className="topmask";
+    mask.innerHTML='<span>'+m.teams+' &nbsp;<span class="src">NOS</span></span>';
+    const close=document.createElement("button"); close.className="closebtn"; close.textContent="✕ sluiten";
+    close.addEventListener("click",function(e){ e.stopPropagation(); player.innerHTML=""; player.appendChild(makeCover(player,m)); });
+    mask.appendChild(close);
+    player.appendChild(iframe); player.appendChild(mask);
+  }
+  render();
+</script>
+</body>
+</html>
