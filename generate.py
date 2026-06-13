@@ -7,12 +7,13 @@ Draait in GitHub Actions (open netwerk):
 - filtert op WK 2026-toernooisamenvattingen,
 - STRIPT elke uitslag/score uit de titel (alleen neutrale landnamen blijven over),
 - bewaart alles in matches.json (historie groeit aan),
-- schrijft index.html.
+- schrijft index.html, gegroepeerd per wedstrijddag (Amerikaanse tijd).
 
 Het script is robuust: lukt het ophalen niet (bijv. geen netwerk), dan
 wordt index.html gewoon opnieuw gebouwd uit de bestaande matches.json.
 """
 import json, os, re, sys, html, datetime, urllib.request
+from zoneinfo import ZoneInfo
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -22,7 +23,12 @@ TOURNAMENT_START = datetime.date(2026, 6, 10)
 MATCHES_FILE = "matches.json"
 OUT_FILE = "index.html"
 
+# Wedstrijddagen worden gegroepeerd op Amerikaanse tijd (VS-oostkust).
+US_TZ = ZoneInfo("America/New_York")
+
 DAYS_ABBR = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+NL_DAYS_FULL = ["maandag", "dinsdag", "woensdag", "donderdag",
+                "vrijdag", "zaterdag", "zondag"]
 MONTHS = ["", "januari", "februari", "maart", "april", "mei", "juni",
           "juli", "augustus", "september", "oktober", "november", "december"]
 
@@ -75,6 +81,17 @@ def fmt_date(iso):
     if not d:
         return ""
     return f"{DAYS_ABBR[d.weekday()]} {d.day} {MONTHS[d.month]} {d.year}"
+
+
+def us_matchday(iso):
+    """Geeft (sorteersleutel, label) voor de wedstrijddag in VS-oostkusttijd."""
+    d = parse_date(iso)
+    if not d:
+        return ("0000-00-00", "Onbekende dag")
+    du = d.astimezone(US_TZ)
+    key = du.strftime("%Y-%m-%d")
+    label = f"{NL_DAYS_FULL[du.weekday()]} {du.day} {MONTHS[du.month]}"
+    return (key, label)
 
 
 def clean_name(s):
@@ -173,7 +190,10 @@ PAGE_TEMPLATE = r"""<!doctype html>
   h1 { font-size:22px; margin:0 0 4px; }
   .sub { color:#5b6470; font-size:14px; margin:0; }
   .spoiler-note { display:inline-flex; align-items:center; gap:7px; background:#e8f0ff; color:#1d4ed8; border:1px solid #cdddff; padding:6px 12px; border-radius:999px; font-size:13px; font-weight:500; margin-top:12px; }
-  .grid { display:grid; gap:18px; margin-top:22px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
+  .grid { display:grid; gap:18px; margin-top:10px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
+  .dayhead { margin:30px 0 0; padding-bottom:8px; border-bottom:1px solid #e3e6ea; font-size:16px; font-weight:700; display:flex; align-items:baseline; gap:8px; }
+  .dayhead .tz { font-size:12px; font-weight:600; color:#8a93a0; }
+  #days > .daygroup:first-child .dayhead { margin-top:18px; }
   .card { background:#fff; border:1px solid #e3e6ea; border-radius:14px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.04); }
   .player { position:relative; width:100%; aspect-ratio:16/9; background:#0b0d10; }
   .cover { position:absolute; inset:0; cursor:pointer; border:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; color:#fff; padding:16px; background:linear-gradient(135deg,#1f2937 0%,#0f172a 100%); }
@@ -189,9 +209,8 @@ PAGE_TEMPLATE = r"""<!doctype html>
   .closebtn:hover { background:rgba(255,255,255,.3); }
   .meta { padding:12px 14px 14px; }
   .meta .teams { font-size:15px; font-weight:700; }
-  .meta .date { font-size:13px; color:#5b6470; margin-top:2px; }
-  .source-line { font-size:12px; color:#8a93a0; margin-top:6px; }
-  .empty { grid-column:1/-1; text-align:center; color:#5b6470; background:#fff; border:1px dashed #d7dbe0; border-radius:14px; padding:40px 20px; }
+  .source-line { font-size:12px; color:#8a93a0; margin-top:4px; }
+  .empty { text-align:center; color:#5b6470; background:#fff; border:1px dashed #d7dbe0; border-radius:14px; padding:40px 20px; margin-top:18px; }
   footer { margin-top:30px; font-size:12px; color:#8a93a0; text-align:center; }
 </style>
 </head>
@@ -202,13 +221,13 @@ PAGE_TEMPLATE = r"""<!doctype html>
       <p class="sub">Bron: <strong>NOS Sport</strong> · bijgewerkt op __UPDATED__</p>
       <div class="spoiler-note"><span>🙈</span> Spoilervrij — geen uitslagen of standen. Klik op een kaart om af te spelen.</div>
     </header>
-    <div class="grid" id="grid"></div>
-    <footer>Deze pagina wordt elke ochtend automatisch ververst. Sluit een video met ✕ om YouTube-eindschermen (kunnen uitslagen tonen) te vermijden.</footer>
+    <div id="days"></div>
+    <footer>Gegroepeerd per wedstrijddag (Amerikaanse tijd). Wordt elke ochtend automatisch ververst. Sluit een video met ✕ om YouTube-eindschermen (kunnen uitslagen tonen) te vermijden.</footer>
   </div>
 <script>
   const MATCHES = __DATA__;
   const ORIGIN = encodeURIComponent(window.location.origin);
-  const grid = document.getElementById("grid");
+  const days = document.getElementById("days");
   function playIcon(){ return '<span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span>'; }
   function makeCover(player, m){
     const c=document.createElement("button"); c.className="cover";
@@ -216,16 +235,29 @@ PAGE_TEMPLATE = r"""<!doctype html>
     c.addEventListener("click",function(){ playVideo(player,m); });
     return c;
   }
+  function makeCard(m){
+    const card=document.createElement("div"); card.className="card";
+    const player=document.createElement("div"); player.className="player";
+    player.appendChild(makeCover(player,m));
+    const meta=document.createElement("div"); meta.className="meta";
+    meta.innerHTML='<div class="teams">'+m.teams+'</div><div class="source-line">Samenvatting: NOS Sport</div>';
+    card.appendChild(player); card.appendChild(meta);
+    return card;
+  }
   function render(){
-    grid.innerHTML="";
-    if(!MATCHES.length){ grid.innerHTML='<div class="empty">Nog geen samenvattingen beschikbaar. De pagina wordt elke ochtend bijgewerkt.</div>'; return; }
+    days.innerHTML="";
+    if(!MATCHES.length){ days.innerHTML='<div class="empty">Nog geen samenvattingen beschikbaar. De pagina wordt elke ochtend bijgewerkt.</div>'; return; }
+    let curKey=null, grid=null;
     MATCHES.forEach(function(m){
-      const card=document.createElement("div"); card.className="card";
-      const player=document.createElement("div"); player.className="player";
-      player.appendChild(makeCover(player,m));
-      const meta=document.createElement("div"); meta.className="meta";
-      meta.innerHTML='<div class="teams">'+m.teams+'</div><div class="date">'+(m.date||"")+'</div><div class="source-line">Samenvatting: NOS Sport</div>';
-      card.appendChild(player); card.appendChild(meta); grid.appendChild(card);
+      if(m.day_key!==curKey){
+        curKey=m.day_key;
+        const group=document.createElement("div"); group.className="daygroup";
+        const head=document.createElement("div"); head.className="dayhead";
+        head.innerHTML='<span>'+(m.day_label||"")+'</span><span class="tz">wedstrijddag · VS-tijd</span>';
+        grid=document.createElement("div"); grid.className="grid";
+        group.appendChild(head); group.appendChild(grid); days.appendChild(group);
+      }
+      grid.appendChild(makeCard(m));
     });
   }
   function playVideo(player,m){
@@ -249,8 +281,15 @@ PAGE_TEMPLATE = r"""<!doctype html>
 
 
 def render_html(matches):
-    data = [{"id": m["id"], "teams": m["teams"], "date": m.get("date", "")}
-            for m in matches]
+    # matches is al gesorteerd op publicatietijd (nieuwste eerst).
+    data = []
+    for m in matches:
+        key, label = us_matchday(m.get("published", ""))
+        data.append({"id": m["id"], "teams": m["teams"],
+                     "day_key": key, "day_label": label})
+    # groepeer op dag, nieuwste dag eerst; binnen een dag blijft de
+    # nieuwste-eerst-volgorde behouden (stabiele sort).
+    data.sort(key=lambda x: x["day_key"], reverse=True)
     today = datetime.date.today()
     updated = f"{today.day} {MONTHS[today.month]} {today.year}"
     page = PAGE_TEMPLATE.replace("__DATA__", json.dumps(data, ensure_ascii=False))
