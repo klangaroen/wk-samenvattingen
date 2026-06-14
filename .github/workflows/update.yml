@@ -3,7 +3,7 @@ name: Update WK samenvattingen
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "13 4 * * *"
 
 permissions:
   contents: write
