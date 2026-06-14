@@ -85,6 +85,7 @@ def resolve_channel_id():
 
 
 def fetch_feed_entries(cid):
+    """Laatste ~15 uploads met EXACTE publicatiedatum (RSS)."""
     xml = fetch(f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}")
     out = []
     for block in re.findall(r"<entry>(.*?)</entry>", xml, re.S):
@@ -98,6 +99,112 @@ def fetch_feed_entries(cid):
                 "published": pub.group(1) if pub else "",
             })
     return out
+
+
+def _extract_json(marker, text):
+    """Pak het eerste complete JSON-object na 'marker' via accolade-tellen."""
+    i = text.find(marker)
+    if i < 0:
+        return None
+    i = text.find("{", i)
+    if i < 0:
+        return None
+    depth = 0
+    instr = False
+    esc = False
+    for j in range(i, len(text)):
+        ch = text[j]
+        if instr:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                instr = False
+        else:
+            if ch == '"':
+                instr = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[i:j + 1]
+    return None
+
+
+def fetch_channel_videos(handle):
+    """Leest de kanaalpagina (ytInitialData) voor veel meer video's dan RSS.
+    Geeft per video: id, titel en de relatieve tijd ('16 uur geleden')."""
+    try:
+        page = fetch(f"https://www.youtube.com/@{handle}/videos")
+    except Exception as e:
+        print("Kanaalpagina ophalen faalde:", e, file=sys.stderr)
+        return []
+    raw = _extract_json("ytInitialData", page)
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        print("ytInitialData parsen faalde:", e, file=sys.stderr)
+        return []
+    out, seen, stack = [], set(), [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            vr = node.get("videoRenderer") or node.get("gridVideoRenderer") \
+                or node.get("reelItemRenderer")
+            if isinstance(vr, dict) and vr.get("videoId") and vr["videoId"] not in seen:
+                seen.add(vr["videoId"])
+                t = vr.get("title", {})
+                title = ""
+                if isinstance(t, dict):
+                    if t.get("runs"):
+                        title = t["runs"][0].get("text", "")
+                    elif t.get("simpleText"):
+                        title = t["simpleText"]
+                rel = ""
+                ptt = vr.get("publishedTimeText", {})
+                if isinstance(ptt, dict):
+                    rel = ptt.get("simpleText", "")
+                out.append({"id": vr["videoId"], "title": title, "rel": rel})
+            for v in node.values():
+                stack.append(v)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return out
+
+
+def fetch_video_published(vid):
+    """Exacte uploaddatum van een losse videopagina (fallback)."""
+    try:
+        page = fetch(f"https://www.youtube.com/watch?v={vid}")
+    except Exception:
+        return ""
+    m = re.search(r'"uploadDate":"([^"]+)"', page)
+    if not m:
+        m = re.search(r'itemprop="datePublished"\s+content="([^"]+)"', page)
+    return m.group(1) if m else ""
+
+
+def approx_from_relative(rel):
+    """Zet '16 uur geleden' / '2 days ago' om naar een benaderde tijd."""
+    if not rel:
+        return ""
+    m = re.search(r"(\d+)\s*(uur|uren|hour|hours|dag|dagen|day|days|min)", rel.lower())
+    if not m:
+        return ""
+    n = int(m.group(1))
+    unit = m.group(2)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if unit.startswith(("uur", "hour")):
+        delta = datetime.timedelta(hours=n)
+    elif unit.startswith(("dag", "day")):
+        delta = datetime.timedelta(days=n)
+    else:
+        delta = datetime.timedelta(minutes=n)
+    return (now - delta).isoformat()
 
 
 def parse_date(iso):
@@ -176,31 +283,68 @@ def save_matches(matches):
         json.dump(matches, f, ensure_ascii=False, indent=2)
 
 
+def is_wk_title(title):
+    t = (title or "").lower()
+    if "samenvatting" not in t:
+        return False
+    if "kwalificatie" in t or "qualif" in t:
+        return False
+    return True
+
+
 def update_matches(matches):
     known = {m["id"] for m in matches}
     cid = resolve_channel_id()
+
+    # Bron 1: RSS (exacte datums, laatste ~15).
+    rss_pub = {}
+    candidates = []
     try:
-        entries = fetch_feed_entries(cid)
+        for e in fetch_feed_entries(cid):
+            rss_pub[e["id"]] = e["published"]
+            candidates.append({"id": e["id"], "title": e["title"], "rel": ""})
     except Exception as e:
-        print("Kon feed niet ophalen, gebruik bestaande matches:", e,
+        print("RSS faalde:", e, file=sys.stderr)
+
+    # Bron 2: kanaalpagina (veel meer dekking).
+    for v in fetch_channel_videos(HANDLE):
+        candidates.append(v)
+
+    if not candidates:
+        print("Geen bronnen beschikbaar, bestaande pagina behouden.",
               file=sys.stderr)
         return matches
+
     added = 0
-    for e in entries:
-        if e["id"] in known or not is_wk_samenvatting(e):
+    seen = set()
+    for c in candidates:
+        vid = c["id"]
+        if vid in known or vid in seen:
             continue
-        teams = neutral_teams(e["title"])
+        seen.add(vid)
+        if not is_wk_title(c.get("title")):
+            continue
+        teams = neutral_teams(c.get("title", ""))
         if not teams:
             continue
+        # exacte datum waar mogelijk, anders videopagina, anders benadering
+        published = (rss_pub.get(vid)
+                     or fetch_video_published(vid)
+                     or approx_from_relative(c.get("rel", "")))
+        d = parse_date(published)
+        if d and d.date() < TOURNAMENT_START:
+            continue  # geen kwalificatie/oude wedstrijden
         matches.append({
-            "id": e["id"],
+            "id": vid,
             "teams": teams,
-            "date": fmt_date(e["published"]),
-            "published": e["published"],
+            "date": fmt_date(published),
+            "published": published or "",
         })
-        known.add(e["id"])
+        known.add(vid)
         added += 1
-    print(f"{added} nieuwe samenvatting(en) toegevoegd.")
+
+    print(f"{added} nieuwe samenvatting(en) toegevoegd "
+          f"(uit {len(seen)} kandidaten).")
     matches.sort(key=lambda m: m.get("published", ""), reverse=True)
     return matches
 
